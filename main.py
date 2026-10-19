@@ -1,7 +1,7 @@
 """Agent Shorts : idée -> script -> voix -> vidéo -> upload YouTube.
 
 Variables d'environnement requises (Secrets GitHub) :
-  GEMINI_API_KEY, PEXELS_API_KEY, YT_CLIENT_ID, YT_CLIENT_SECRET, YT_REFRESH_TOKEN
+  GEMINI_API_KEY, PIXABAY_API_KEY, YT_CLIENT_ID, YT_CLIENT_SECRET, YT_REFRESH_TOKEN
 Variables optionnelles : NICHE, LANGUE, VOICE, PRIVACY, GEMINI_MODEL
 """
 import asyncio
@@ -109,27 +109,32 @@ def build_ass(words, path):
     path.write_text(ASS_HEADER + "\n".join(lines) + "\n", encoding="utf-8")
 
 
-# ---------- 4. Vidéos de stock (Pexels, gratuit) ----------
+# ---------- 4. Vidéos de stock (Pixabay, gratuit) ----------
 def fetch_clip(keyword, dest, used):
     r = requests.get(
-        "https://api.pexels.com/videos/search",
-        headers={"Authorization": os.environ["PEXELS_API_KEY"]},
-        params={"query": keyword, "orientation": "portrait", "per_page": 10},
+        "https://pixabay.com/api/videos/",
+        params={
+            "key": os.environ["PIXABAY_API_KEY"],
+            "q": keyword[:100],
+            "per_page": 20,
+            "safesearch": "true",
+        },
         timeout=30,
     )
     r.raise_for_status()
-    vids = [v for v in r.json().get("videos", []) if v["id"] not in used]
-    if not vids:
+    hits = [h for h in r.json().get("hits", []) if h["id"] not in used]
+    if not hits:
         return False
-    v = random.choice(vids)
-    mp4s = [f for f in v["video_files"] if f.get("file_type") == "video/mp4"]
-    portrait = [f for f in mp4s if (f.get("height") or 0) > (f.get("width") or 0)]
-    files = portrait or mp4s
-    if not files:
+    hit = random.choice(hits)
+    link = None
+    for size in ("large", "medium", "small", "tiny"):
+        link = (hit.get("videos", {}).get(size) or {}).get("url")
+        if link:
+            break
+    if not link:
         return False
-    best = min(files, key=lambda x: abs((x.get("width") or 0) - 1080))
-    used.add(v["id"])
-    with requests.get(best["link"], stream=True, timeout=120) as d:
+    used.add(hit["id"])
+    with requests.get(link, stream=True, timeout=120) as d:
         d.raise_for_status()
         with open(dest, "wb") as out:
             for chunk in d.iter_content(1 << 20):
@@ -146,7 +151,7 @@ def build_video(keywords, total, work):
         if fetch_clip(keywords[i % len(keywords)], work / name, used):
             clips.append(name)
     if not clips:
-        raise RuntimeError("Aucune vidéo trouvée sur Pexels pour ces mots-clés.")
+        raise RuntimeError("Aucune vidéo trouvée sur Pixabay pour ces mots-clés.")
     seg = total / len(clips)
     segs = []
     for i, c in enumerate(clips):
